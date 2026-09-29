@@ -29,6 +29,7 @@ struct UsageView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             if let s = model.status {
+                progressBar(s)
                 Divider()
                 stats(s)
             }
@@ -59,6 +60,33 @@ struct UsageView: View {
             }
             Spacer()
             if model.isLoading { ProgressView().controlSize(.small) }
+        }
+    }
+
+    /// Spend vs full monthly budget; the orange tail is the reserve and the tick marks where spend should be today.
+    private func progressBar(_ s: BudgetStatus) -> some View {
+        let total = max(s.monthlyBudget, 0.01)
+        let spent = min(max(s.spent / total, 0), 1)
+        let expected = min(max(s.expectedSpend / total, 0), 1)
+        let reserve = min(max(s.reservedAmount / total, 0), 1)
+        return VStack(alignment: .leading, spacing: 3) {
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.2))
+                    Rectangle().fill(Color.orange.opacity(0.35))
+                        .frame(width: w * reserve)
+                        .offset(x: w * (1 - reserve))
+                    Capsule().fill(color(s)).frame(width: w * spent)
+                    Rectangle().fill(Color.primary.opacity(0.7))
+                        .frame(width: 2, height: 12)
+                        .offset(x: w * expected - 1)
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: 8)
+            Text("\(Int((s.spent / total * 100).rounded()))% of \(usd(s.monthlyBudget)) · reserve \(usd(s.reservedAmount)) · tick = expected today")
+                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
