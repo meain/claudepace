@@ -19,10 +19,11 @@ Only covers Claude Code on this machine, at list prices.
 ## Build
 
 ```sh
-./build.sh                                          # → build/ClaudePace.app
-open build/ClaudePace.app
-swift run --build-system native BudgetChecks        # budget math checks
-swift run --build-system native BudgetChecks --scan # this month's spend by model
+make link    # build ClaudePace.app and symlink it into /Applications
+make install # or copy it there instead
+make check   # budget math checks
+make scan    # this month's spend by model
+make help    # all targets
 ```
 
 Builds with Command Line Tools only (no Xcode), which is why it uses `--build-system native` and avoids SwiftUI macros like `@State`.
