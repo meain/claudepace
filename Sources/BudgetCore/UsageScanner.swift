@@ -16,6 +16,16 @@ public struct ProjectUsage: Sendable {
     public var messages = 0
 }
 
+public struct SessionUsage: Sendable {
+    public var project: String
+    /// The session's name (`/rename` title, else the generated one); nil if it has none.
+    public var title: String?
+    public var cost: Double = 0
+    public var messages = 0
+    public var start: Date
+    public var end: Date
+}
+
 public struct UsageSummary: Sendable {
     public var total: Double = 0
     public var totalToday: Double = 0
@@ -24,6 +34,8 @@ public struct UsageSummary: Sendable {
     public var byProject: [String: ProjectUsage] = [:]
     /// Spend per local calendar day, keyed by the start of that day.
     public var byDay: [Date: Double] = [:]
+    /// Keyed by Claude Code session id.
+    public var bySession: [String: SessionUsage] = [:]
     /// Models seen in the logs with no price; their usage is not counted.
     public var unpricedModels: Set<String> = []
     public var messages: Int { byModel.values.reduce(0) { $0 + $1.messages } }
@@ -38,11 +50,22 @@ public struct UsageSummary: Sendable {
         byProject.sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
     }
 
+    /// Sessions by descending cost.
+    public var sessions: [(id: String, usage: SessionUsage)] {
+        bySession.sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
+    }
+
     public init() {}
 
     mutating func add(_ e: UsageEntry, cost: Double, today: Bool, day: Date) {
         total += cost
         byDay[day, default: 0] += cost
+        var s = bySession[e.session, default: SessionUsage(project: e.project, start: e.date, end: e.date)]
+        s.cost += cost
+        s.messages += 1
+        s.start = min(s.start, e.date)
+        s.end = max(s.end, e.date)
+        bySession[e.session] = s
         var p = byProject[e.project, default: ProjectUsage()]
         p.cost += cost
         p.messages += 1
@@ -71,6 +94,8 @@ public final class ScanCache: @unchecked Sendable {
         let mtime: Date
         let since: Date
         let entries: [UsageEntry]
+        /// Session id → title (a `/rename` title beats the generated one).
+        let titles: [String: String]
     }
     fileprivate var files: [URL: FileEntry] = [:]
 
@@ -83,6 +108,7 @@ struct UsageEntry {
     let date: Date
     let model: String
     let project: String
+    let session: String
     let input, output, cacheWrite5m, cacheWrite1h, cacheRead: Int
 
     func cost(_ p: ModelPrice) -> Double {
@@ -124,6 +150,7 @@ public struct UsageScanner: Sendable {
         // session is resumed); token counts only grow, so keep the costliest copy.
         var byKey: [String: (entry: UsageEntry, cost: Double)] = [:]
         var summary = UsageSummary()
+        var titles: [String: String] = [:]
         let todayStart = todayStart ?? end
 
         let calendar = Calendar.current
@@ -135,9 +162,13 @@ public struct UsageScanner: Sendable {
             let entries: [UsageEntry]
             if let c = cache.files[url], c.size == size, c.mtime == mtime, c.since <= start {
                 entries = c.entries
+                titles.merge(c.titles) { _, new in new }
             } else {
-                entries = parse(url, since: start)
-                cache.files[url] = .init(size: size, mtime: mtime, since: start, entries: entries)
+                let parsed = parse(url, since: start)
+                entries = parsed.entries
+                titles.merge(parsed.titles) { _, new in new }
+                cache.files[url] = .init(size: size, mtime: mtime, since: start,
+                                         entries: parsed.entries, titles: parsed.titles)
             }
             for e in entries where e.date >= start && e.date < end {
                 guard let p = prices.price(for: e.model) else {
@@ -153,6 +184,7 @@ public struct UsageScanner: Sendable {
             }
         }
         for (e, cost) in byKey.values { add(e, cost) }
+        for (id, title) in titles { summary.bySession[id]?.title = title }
         return summary
     }
 
@@ -174,21 +206,40 @@ public struct UsageScanner: Sendable {
         }
         let timestamp: String?
         let requestId: String?
+        let sessionId: String?
         let cwd: String?
         let message: Message?
     }
 
-    private func parse(_ url: URL, since start: Date) -> [UsageEntry] {
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return [] }
+    private struct TitleLine: Decodable {
+        let type: String?
+        let aiTitle: String?
+        let customTitle: String?
+        let sessionId: String?
+    }
+
+    private func parse(_ url: URL, since start: Date) -> (entries: [UsageEntry], titles: [String: String]) {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return ([], [:]) }
+        let titleMarker = Data(#"-title""#.utf8)
+        var aiTitles: [String: String] = [:]
+        var customTitles: [String: String] = [:]
         let decoder = JSONDecoder()
         let isoFrac = ISO8601DateFormatter()
         isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let iso = ISO8601DateFormatter()
         let usageMarker = Data(#""usage""#.utf8)
         let fallbackProject = url.deletingLastPathComponent().lastPathComponent
+        let fallbackSession = url.deletingPathExtension().lastPathComponent
 
         var out: [UsageEntry] = []
         for line in data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true) {
+            if line.range(of: usageMarker) == nil, line.range(of: titleMarker) != nil,
+               let t = try? decoder.decode(TitleLine.self, from: line) {
+                let id = t.sessionId ?? fallbackSession
+                if t.type == "custom-title", let title = t.customTitle { customTitles[id] = title }
+                if t.type == "ai-title", let title = t.aiTitle { aiTitles[id] = title }
+                continue
+            }
             guard line.range(of: usageMarker) != nil,
                   let entry = try? decoder.decode(Line.self, from: line),
                   let msg = entry.message, let usage = msg.usage, let model = msg.model,
@@ -203,11 +254,12 @@ public struct UsageScanner: Sendable {
             let project = entry.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
                 .flatMap { $0.isEmpty ? nil : $0 } ?? fallbackProject
             out.append(UsageEntry(key: key, date: date, model: model, project: project,
+                                  session: entry.sessionId ?? fallbackSession,
                                   input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0,
                                   cacheWrite5m: cacheWrite - w1h, cacheWrite1h: w1h,
                                   cacheRead: usage.cache_read_input_tokens ?? 0))
         }
-        return out
+        return (out, aiTitles.merging(customTitles) { _, custom in custom })
     }
 
     private func jsonlFiles(modifiedAfter start: Date) -> [(URL, Int, Date)] {

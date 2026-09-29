@@ -6,6 +6,10 @@ import SwiftUI
 struct ClaudePaceApp: App {
     @StateObject private var model = UsageModel()
 
+    init() {
+        Screenshot.runIfRequested()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             UsageView(model: model)
@@ -18,10 +22,14 @@ struct ClaudePaceApp: App {
 
 /// Local view state; `@State` is a macro that Command Line Tools can't expand.
 final class ViewState: ObservableObject {
-    enum Breakdown: String, CaseIterable { case models = "Models", projects = "Projects" }
+    enum Breakdown: String, CaseIterable {
+        case models = "Models", projects = "Projects", sessions = "Sessions"
+    }
 
     @Published var showSettings = false
-    @Published var breakdown = Breakdown.models
+    @Published var breakdown: Breakdown
+
+    init(breakdown: Breakdown = .models) { self.breakdown = breakdown }
 }
 
 private extension View {
@@ -34,7 +42,12 @@ private extension View {
 
 struct UsageView: View {
     @ObservedObject var model: UsageModel
-    @StateObject private var ui = ViewState()
+    @StateObject private var ui: ViewState
+
+    init(model: UsageModel, breakdown: ViewState.Breakdown = .models) {
+        self.model = model
+        _ui = StateObject(wrappedValue: ViewState(breakdown: breakdown))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -154,6 +167,13 @@ struct UsageView: View {
         }
         let active = days.filter { $0.cost > 0 }
         let average = active.isEmpty ? 0 : active.reduce(0) { $0 + $1.cost } / Double(active.count)
+        let prev = model.previousSummary
+        let prevStart = cal.date(byAdding: .month, value: -1, to: start)!
+        let prevDaily = (0..<s.daysInMonth).compactMap { i -> Day? in
+            guard let p = prev, let pd = cal.date(byAdding: .day, value: i, to: prevStart),
+                  pd < start else { return nil }
+            return Day(date: cal.date(byAdding: .day, value: i, to: start)!, cost: p.byDay[pd] ?? 0)
+        }
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Daily spend").font(.caption.weight(.semibold))
@@ -162,6 +182,13 @@ struct UsageView: View {
                     .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
             }
             Chart {
+                ForEach(prevDaily) { d in
+                    LineMark(x: .value("Day", d.date, unit: .day), y: .value("Spend", d.cost),
+                             series: .value("Series", "last month"))
+                        .foregroundStyle(Color.secondary.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .interpolationMethod(.monotone)
+                }
                 ForEach(days) { d in
                     BarMark(x: .value("Day", d.date, unit: .day), y: .value("Spend", d.cost))
                         .foregroundStyle(d.cost > s.dailyAllowance ? Color.red : Color.green)
@@ -180,8 +207,27 @@ struct UsageView: View {
                 }
             }
             .frame(height: 64)
+            if let text = monthComparison(s) {
+                Text(text).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+            }
         }
         .card()
+    }
+
+    /// Spend before today vs the same stretch of last month (the grey line above).
+    private func monthComparison(_ s: BudgetStatus) -> String? {
+        guard let prev = model.previousSummary, prev.total > 0 else { return nil }
+        let cal = Calendar.current
+        let start = BudgetStatus.monthStart(of: Date())
+        let prevStart = cal.date(byAdding: .month, value: -1, to: start)!
+        let samePoint = (0..<s.completedDays).reduce(0.0) { acc, i in
+            acc + (cal.date(byAdding: .day, value: i, to: prevStart).flatMap { prev.byDay[$0] } ?? 0)
+        }
+        let so = s.spent - (model.summary?.totalToday ?? 0)
+        let tail = "last month \(usd(prev.total, fraction: 0)) total"
+        guard samePoint > 0 else { return tail }
+        let pct = Int(((so - samePoint) / samePoint * 100).rounded())
+        return "\(pct >= 0 ? "+" : "−")\(abs(pct))% vs same point last month · " + tail
     }
 
     // MARK: Tiles
@@ -214,6 +260,7 @@ struct UsageView: View {
             switch ui.breakdown {
             case .models: models(summary)
             case .projects: projects(summary)
+            case .sessions: sessions(summary)
             }
         }
         .card()
@@ -249,7 +296,35 @@ struct UsageView: View {
         }
     }
 
-    private func row(name: String, cost: Double, share: Double, detail: String, tokens: String?) -> some View {
+    private static let sessionLimit = 8
+
+    private func sessions(_ summary: UsageSummary) -> some View {
+        let all = summary.sessions
+        let top = all.first?.usage.cost ?? 0
+        return VStack(alignment: .leading, spacing: 10) {
+            ForEach(all.prefix(Self.sessionLimit), id: \.id) { x in
+                let u = x.usage
+                row(name: u.title ?? u.project, cost: u.cost, share: top > 0 ? u.cost / top : 0,
+                    detail: (u.title == nil ? "" : "\(u.project) · ")
+                        + "\(u.start.formatted(.dateTime.month(.abbreviated).day())) · "
+                        + "\(duration(u.end.timeIntervalSince(u.start))) · \(u.messages) msgs",
+                    tokens: nil, showShare: false)
+            }
+            if all.count > Self.sessionLimit {
+                Text("\(all.count) sessions this month")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func duration(_ t: TimeInterval) -> String {
+        let m = Int(t / 60)
+        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
+    }
+
+    /// `share` fills the bar; `showShare` also prints it as a percentage of the total.
+    private func row(name: String, cost: Double, share: Double, detail: String, tokens: String?,
+                     showShare: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
@@ -263,7 +338,7 @@ struct UsageView: View {
                     }
             }
             .frame(height: 4)
-            Text("\(Int((share * 100).rounded()))% · \(detail)")
+            Text(showShare ? "\(Int((share * 100).rounded()))% · \(detail)" : detail)
                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             if let tokens {
                 Text(tokens).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
@@ -313,6 +388,17 @@ struct UsageView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            Menu {
+                Button("Copy JSON") { model.copyExport(json: true) }
+                Menu("Copy CSV") {
+                    ForEach(Export.Grouping.allCases, id: \.self) { g in
+                        Button("by \(g.rawValue)") { model.copyExport(json: false, by: g) }
+                    }
+                }
+            } label: { Image(systemName: "square.and.arrow.up") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Copy this month's usage to the clipboard")
+                .disabled(model.summary == nil)
             Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                 .buttonStyle(.borderless).help("Refresh").disabled(model.isLoading)
             Button("Quit") { NSApplication.shared.terminate(nil) }

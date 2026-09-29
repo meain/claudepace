@@ -3,6 +3,32 @@
 import BudgetCore
 import Foundation
 
+// `BudgetChecks --export json|csv [--by day|model|project|session]` dumps this month's usage
+// (json includes last month's daily spend; csv defaults to sessions).
+if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--export" {
+    let args = CommandLine.arguments
+    let format = args[2]
+    let by = args.firstIndex(of: "--by").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
+    guard format == "json" || format == "csv",
+          by == nil || Export.Grouping(rawValue: by!) != nil else {
+        FileHandle.standardError.write(Data("usage: --export json|csv [--by day|model|project|session]\n".utf8))
+        exit(2)
+    }
+    let scanner = UsageScanner(prices: .builtin)
+    let cache = ScanCache()
+    let now = Date()
+    let start = BudgetStatus.monthStart(of: now)
+    let prevStart = Calendar.current.date(byAdding: .month, value: -1, to: start)!
+    let previous = scanner.scan(from: prevStart, to: start, cache: cache)
+    let current = scanner.scan(from: start, to: now, todayStart: Calendar.current.startOfDay(for: now), cache: cache)
+    if format == "json" {
+        print(Export.json(current, month: start, previous: previous), terminator: "")
+    } else {
+        print(Export.csv(current, by: by.flatMap(Export.Grouping.init) ?? .session), terminator: "")
+    }
+    exit(0)
+}
+
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--scan" {
     var prices = PriceTable.builtin
     if CommandLine.arguments.count > 2,
@@ -20,6 +46,10 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--scan" {
     let warm = clock.measure { summary = scanner.scan(from: start, todayStart: today, cache: cache) }
     for (model, u) in summary.models {
         print(String(format: "%-32@ $%10.2f  today $%8.2f  msgs %6d", model as NSString, u.cost, u.costToday, u.messages))
+    }
+    for (id, u) in summary.sessions.prefix(5) {
+        print(String(format: "session %@ %-20@ $%10.2f  msgs %5d", String(id.prefix(8)) as NSString,
+                     u.project as NSString, u.cost, u.messages))
     }
     for (project, u) in summary.projects.prefix(5) {
         print(String(format: "project %-24@ $%10.2f  today $%8.2f", project as NSString, u.cost, u.costToday))

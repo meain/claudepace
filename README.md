@@ -7,7 +7,9 @@ macOS menu bar app that shows how many days ahead (`+2d`) or behind (`−1d`) yo
 - Pace-aware "left today": what's left of the budget spread over the remaining days, so past over/underspend carries forward.
 - Month progress bar with the reserve and where spend should be by today.
 - Daily spend sparkline against the daily allowance.
-- Breakdown by model (cost, today's spend, messages, tokens) or by project.
+- Breakdown by model (cost, today's spend, messages, tokens), project, or session (the costliest sessions this month, by session name with the project underneath).
+- Last month's daily spend as a grey line on the sparkline, with a % change vs the same point last month.
+- Export this month's usage as JSON or CSV (by day, model, project or session): the share button in the popup copies it to the clipboard, or run `make export FORMAT=json` / `make export FORMAT=csv BY=session`.
 
 ## How it works
 
@@ -28,6 +30,8 @@ make link    # build ClaudePace.app and symlink it into /Applications
 make install # or copy it there instead
 make check   # budget math checks
 make scan    # this month's spend by model
+make export FORMAT=json # or FORMAT=csv BY=day|model|project|session
+make screenshot # render the popup to docs/screenshot.png (TAB=models|projects|sessions)
 make help    # all targets
 ```
 

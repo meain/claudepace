@@ -9,7 +9,7 @@ SPM      := --build-system native
 unexport SDKROOT
 unexport DEVELOPER_DIR
 
-.PHONY: build run release app check scan install link unlink clean help
+.PHONY: build run release app check scan export screenshot install link unlink clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -32,6 +32,12 @@ check: ## Run budget math checks
 
 scan: ## Print this month's spend by model
 	$(SWIFT) run $(SPM) BudgetChecks --scan
+
+export: ## Dump this month's usage: make export FORMAT=json|csv [BY=day|model|project|session]
+	@$(SWIFT) run $(SPM) -q BudgetChecks --export $(or $(FORMAT),json) $(if $(BY),--by $(BY))
+
+screenshot: app ## Render the popup to docs/screenshot.png (TAB=models|projects|sessions)
+	$(BUILT)/Contents/MacOS/ClaudePace --screenshot docs/screenshot.png $(if $(TAB),--tab $(TAB))
 
 install: app ## Copy ClaudePace.app into /Applications
 	rm -rf "$(APPS_DIR)/$(APP)"

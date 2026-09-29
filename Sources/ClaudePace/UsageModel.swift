@@ -1,3 +1,4 @@
+import AppKit
 import BudgetCore
 import Combine
 import Foundation
@@ -20,6 +21,9 @@ final class UsageModel: ObservableObject {
     }
 
     @Published private(set) var summary: UsageSummary?
+    /// Last calendar month, for comparison.
+    @Published private(set) var previousSummary: UsageSummary?
+    private var previousMonthStart: Date?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isLoading = false
     @Published private(set) var pricingSource = "built-in"
@@ -93,10 +97,31 @@ final class UsageModel: ObservableObject {
         let now = Date()
         let start = BudgetStatus.monthStart(of: now)
         let today = Calendar.current.startOfDay(for: now)
-        summary = await Task.detached(priority: .utility) {
-            UsageScanner(prices: prices).scan(from: start, to: now, todayStart: today, cache: cache)
+        // Last month is final, so scan it once per month (first, so the cache covers both windows).
+        let needPrevious = previousMonthStart != start
+        let prevStart = Calendar.current.date(byAdding: .month, value: -1, to: start)!
+        let (current, previous) = await Task.detached(priority: .utility) {
+            let scanner = UsageScanner(prices: prices)
+            let previous = needPrevious ? scanner.scan(from: prevStart, to: start, cache: cache) : nil
+            return (scanner.scan(from: start, to: now, todayStart: today, cache: cache), previous)
         }.value
+        summary = current
+        if let previous {
+            previousSummary = previous
+            previousMonthStart = start
+        }
         lastUpdated = now
+    }
+
+    // MARK: Export
+
+    func copyExport(json: Bool, by grouping: Export.Grouping = .session) {
+        guard let summary else { return }
+        let text = json
+            ? Export.json(summary, month: BudgetStatus.monthStart(of: Date()), previous: previousSummary)
+            : Export.csv(summary, by: grouping)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// Keeps the built-in table when offline; a failed fetch retries next refresh.
