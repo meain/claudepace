@@ -296,6 +296,10 @@ struct UsageView: View {
                 Text("Reserve: \(Int(model.reservePercent))%")
                 Slider(value: $model.reservePercent, in: 0...90, step: 1)
             }
+            Picker("Menu bar", selection: $model.menuBarMode) {
+                ForEach(UsageModel.MenuBarMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
             Text("Source: Claude Code logs · pricing: \(model.pricingSource)")
                 .font(.caption).foregroundStyle(.secondary)
         }

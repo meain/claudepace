@@ -11,6 +11,14 @@ final class UsageModel: ObservableObject {
         didSet { UserDefaults.standard.set(reservePercent, forKey: "reservePercent") }
     }
 
+    enum MenuBarMode: String, CaseIterable {
+        case days = "Days", percent = "% left", dollars = "$ left"
+    }
+
+    @Published var menuBarMode: MenuBarMode {
+        didSet { UserDefaults.standard.set(menuBarMode.rawValue, forKey: "menuBarMode") }
+    }
+
     @Published private(set) var summary: UsageSummary?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isLoading = false
@@ -36,6 +44,7 @@ final class UsageModel: ObservableObject {
         d.register(defaults: ["monthlyBudget": 2000.0, "reservePercent": 10.0])
         monthlyBudget = d.double(forKey: "monthlyBudget")
         reservePercent = d.double(forKey: "reservePercent")
+        menuBarMode = d.string(forKey: "menuBarMode").flatMap(MenuBarMode.init) ?? .days
 
         if let data = try? Data(contentsOf: Self.pricesCacheFile), let t = PriceTable.fromLiteLLM(data) {
             prices = PriceTable.builtin.merging(t)
@@ -56,7 +65,22 @@ final class UsageModel: ObservableObject {
                             spent: summary.total, now: Date())
     }
 
-    var menuBarLabel: String { status?.label ?? "…" }
+    var menuBarLabel: String {
+        guard let status else { return "…" }
+        let today = summary?.totalToday ?? 0
+        let left = status.paceLeftToday(spentToday: today)
+        let sign = left < 0 ? "−" : ""
+        switch menuBarMode {
+        case .days:
+            return status.label
+        case .percent:
+            let target = status.todayTarget(spentToday: today)
+            let pct = target > 0 ? Int((abs(left) / target * 100).rounded()) : 0
+            return "\(sign)\(pct)%"
+        case .dollars:
+            return "\(sign)$\(Int(abs(left).rounded()))"
+        }
+    }
 
     func refresh() async {
         guard !isLoading else { return }
