@@ -77,7 +77,7 @@ struct UsageView: View {
         HStack(spacing: 8) {
             Text("Claude Pace").font(.headline)
             if let s = model.status {
-                Text("\(s.label) · " + String(format: "%+.1f days", s.daysAhead))
+                Text(String(format: "%+.1f days", s.daysAhead))
                     .font(.caption.weight(.semibold)).monospacedDigit()
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(color(s).opacity(0.18), in: Capsule())
