@@ -21,6 +21,10 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--scan" {
     for (model, u) in summary.models {
         print(String(format: "%-32@ $%10.2f  today $%8.2f  msgs %6d", model as NSString, u.cost, u.costToday, u.messages))
     }
+    for (project, u) in summary.projects.prefix(5) {
+        print(String(format: "project %-24@ $%10.2f  today $%8.2f", project as NSString, u.cost, u.costToday))
+    }
+    print("days with spend: \(summary.byDay.count)")
     print(String(format: "%-32@ $%10.2f  today $%8.2f", "total" as NSString, summary.total, summary.totalToday))
     print("messages: \(summary.messages), unpriced: \(summary.unpricedModels.sorted()), cold: \(cold), warm: \(warm)")
     exit(0)
@@ -68,6 +72,16 @@ do {
     check(s.daysInMonth == 28, "feb days")
     check(abs(s.usableBudget - 1800) < 1e-9, "usable budget")
     check(abs(s.dailyAllowance - 1800.0 / 28) < 1e-9, "daily allowance")
+}
+
+// Day 3 of 30: 28 days remain; $150 spent before today, $50 today.
+do {
+    let s = status(spent: 200, "2026-09-03T12:00:00Z")
+    check(s.daysRemaining == 28, "daysRemaining")
+    check(abs(s.todayTarget(spentToday: 50) - 1850.0 / 28) < 1e-9, "todayTarget")
+    check(abs(s.paceLeftToday(spentToday: 50) - (1850.0 / 28 - 50)) < 1e-9, "paceLeftToday")
+    let over = status(spent: 2500, "2026-09-03T12:00:00Z")
+    check(over.todayTarget(spentToday: 0) == 0, "no target once budget is spent")
 }
 
 do {

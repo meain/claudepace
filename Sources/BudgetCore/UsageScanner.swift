@@ -10,10 +10,20 @@ public struct ModelUsage: Sendable {
     public var cacheReadTokens = 0
 }
 
+public struct ProjectUsage: Sendable {
+    public var cost: Double = 0
+    public var costToday: Double = 0
+    public var messages = 0
+}
+
 public struct UsageSummary: Sendable {
     public var total: Double = 0
     public var totalToday: Double = 0
     public var byModel: [String: ModelUsage] = [:]
+    /// Keyed by the project directory's name (last component of the session's cwd).
+    public var byProject: [String: ProjectUsage] = [:]
+    /// Spend per local calendar day, keyed by the start of that day.
+    public var byDay: [Date: Double] = [:]
     /// Models seen in the logs with no price; their usage is not counted.
     public var unpricedModels: Set<String> = []
     public var messages: Int { byModel.values.reduce(0) { $0 + $1.messages } }
@@ -23,10 +33,21 @@ public struct UsageSummary: Sendable {
         byModel.sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
     }
 
+    /// Projects by descending cost.
+    public var projects: [(name: String, usage: ProjectUsage)] {
+        byProject.sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
+    }
+
     public init() {}
 
-    mutating func add(_ e: UsageEntry, cost: Double, today: Bool) {
+    mutating func add(_ e: UsageEntry, cost: Double, today: Bool, day: Date) {
         total += cost
+        byDay[day, default: 0] += cost
+        var p = byProject[e.project, default: ProjectUsage()]
+        p.cost += cost
+        p.messages += 1
+        if today { p.costToday += cost }
+        byProject[e.project] = p
         var m = byModel[e.model, default: ModelUsage()]
         m.cost += cost
         m.messages += 1
@@ -61,6 +82,7 @@ struct UsageEntry {
     let key: String?
     let date: Date
     let model: String
+    let project: String
     let input, output, cacheWrite5m, cacheWrite1h, cacheRead: Int
 
     func cost(_ p: ModelPrice) -> Double {
@@ -104,8 +126,9 @@ public struct UsageScanner: Sendable {
         var summary = UsageSummary()
         let todayStart = todayStart ?? end
 
+        let calendar = Calendar.current
         func add(_ e: UsageEntry, _ cost: Double) {
-            summary.add(e, cost: cost, today: e.date >= todayStart)
+            summary.add(e, cost: cost, today: e.date >= todayStart, day: calendar.startOfDay(for: e.date))
         }
 
         for (url, size, mtime) in jsonlFiles(modifiedAfter: start) {
@@ -151,6 +174,7 @@ public struct UsageScanner: Sendable {
         }
         let timestamp: String?
         let requestId: String?
+        let cwd: String?
         let message: Message?
     }
 
@@ -161,6 +185,7 @@ public struct UsageScanner: Sendable {
         isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let iso = ISO8601DateFormatter()
         let usageMarker = Data(#""usage""#.utf8)
+        let fallbackProject = url.deletingLastPathComponent().lastPathComponent
 
         var out: [UsageEntry] = []
         for line in data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true) {
@@ -175,7 +200,9 @@ public struct UsageScanner: Sendable {
             let cacheWrite = usage.cache_creation_input_tokens ?? 0
             let w1h = min(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0, cacheWrite)
             let key = msg.id.flatMap { id in entry.requestId.map { id + ":" + $0 } }
-            out.append(UsageEntry(key: key, date: date, model: model,
+            let project = entry.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
+                .flatMap { $0.isEmpty ? nil : $0 } ?? fallbackProject
+            out.append(UsageEntry(key: key, date: date, model: model, project: project,
                                   input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0,
                                   cacheWrite5m: cacheWrite - w1h, cacheWrite1h: w1h,
                                   cacheRead: usage.cache_read_input_tokens ?? 0))

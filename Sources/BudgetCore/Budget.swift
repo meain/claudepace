@@ -39,6 +39,20 @@ public struct BudgetStatus: Equatable, Sendable {
     public var leftToday: Double { dailyAllowance * Double(dayOfMonth) - spent }
     public var remainingThisMonth: Double { usableBudget - spent }
 
+    /// Days left in the month including today.
+    public var daysRemaining: Int { daysInMonth - dayOfMonth + 1 }
+
+    /// Today's share of what was left at the start of the day, spread over the days remaining.
+    /// Unlike `dailyAllowance`, it absorbs past under/overspend.
+    public func todayTarget(spentToday: Double) -> Double {
+        max(usableBudget - (spent - spentToday), 0) / Double(daysRemaining)
+    }
+
+    /// Pace-aware: negative once today's target is exceeded.
+    public func paceLeftToday(spentToday: Double) -> Double {
+        todayTarget(spentToday: spentToday) - spentToday
+    }
+
     public static func monthStart(of date: Date, calendar cal: Calendar = .current) -> Date {
         cal.date(from: cal.dateComponents([.year, .month], from: date))!
     }

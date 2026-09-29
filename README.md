@@ -2,7 +2,12 @@
 
 <img src="docs/screenshot.png" alt="ClaudePace popover" width="300" align="right">
 
-macOS menu bar app that shows how many days ahead (`+2d`) or behind (`−1d`) you are on your monthly Claude budget, with a per-model breakdown of cost, today's spend, messages and tokens.
+macOS menu bar app that shows how many days ahead (`+2d`) or behind (`−1d`) you are on your monthly Claude budget.
+
+- Pace-aware "left today": what's left of the budget spread over the remaining days, so past over/underspend carries forward.
+- Month progress bar with the reserve and where spend should be by today.
+- Daily spend sparkline against the daily allowance.
+- Breakdown by model (cost, today's spend, messages, tokens) or by project.
 
 ## How it works
 
