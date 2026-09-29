@@ -384,8 +384,10 @@ struct UsageView: View {
     private var footer: some View {
         HStack {
             if let t = model.lastUpdated {
-                Text("Updated \(t.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption).foregroundStyle(.secondary)
+                TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                    Text("Updated \(ago(t, now: ctx.date))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer()
             Menu {
@@ -407,6 +409,14 @@ struct UsageView: View {
     }
 
     // MARK: Helpers
+
+    private func ago(_ t: Date, now: Date) -> String {
+        let secs = now.timeIntervalSince(t)
+        if secs < 60 { return "just now" }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f.localizedString(for: t, relativeTo: now)
+    }
 
     private func color(_ s: BudgetStatus?) -> Color {
         guard let s else { return .secondary }
