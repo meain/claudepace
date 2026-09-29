@@ -15,12 +15,13 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--scan" {
     let cache = ScanCache()
     let start = BudgetStatus.monthStart(of: Date())
     var summary = UsageSummary()
-    let cold = clock.measure { summary = scanner.scan(from: start, cache: cache) }
-    let warm = clock.measure { summary = scanner.scan(from: start, cache: cache) }
-    for (model, cost) in summary.byModel.sorted(by: { $0.value > $1.value }) {
-        print(String(format: "%-32@ $%10.2f", model as NSString, cost))
+    let today = Calendar.current.startOfDay(for: Date())
+    let cold = clock.measure { summary = scanner.scan(from: start, todayStart: today, cache: cache) }
+    let warm = clock.measure { summary = scanner.scan(from: start, todayStart: today, cache: cache) }
+    for (model, u) in summary.models {
+        print(String(format: "%-32@ $%10.2f  today $%8.2f  msgs %6d", model as NSString, u.cost, u.costToday, u.messages))
     }
-    print(String(format: "%-32@ $%10.2f", "total" as NSString, summary.total))
+    print(String(format: "%-32@ $%10.2f  today $%8.2f", "total" as NSString, summary.total, summary.totalToday))
     print("messages: \(summary.messages), unpriced: \(summary.unpricedModels.sorted()), cold: \(cold), warm: \(warm)")
     exit(0)
 }

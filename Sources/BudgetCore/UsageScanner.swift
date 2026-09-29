@@ -1,13 +1,45 @@
 import Foundation
 
+public struct ModelUsage: Sendable {
+    public var cost: Double = 0
+    public var costToday: Double = 0
+    public var messages = 0
+    public var inputTokens = 0
+    public var outputTokens = 0
+    public var cacheWriteTokens = 0
+    public var cacheReadTokens = 0
+}
+
 public struct UsageSummary: Sendable {
     public var total: Double = 0
-    public var byModel: [String: Double] = [:]
+    public var totalToday: Double = 0
+    public var byModel: [String: ModelUsage] = [:]
     /// Models seen in the logs with no price; their usage is not counted.
     public var unpricedModels: Set<String> = []
-    public var messages = 0
+    public var messages: Int { byModel.values.reduce(0) { $0 + $1.messages } }
+
+    /// Models by descending cost.
+    public var models: [(name: String, usage: ModelUsage)] {
+        byModel.sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
+    }
 
     public init() {}
+
+    mutating func add(_ e: UsageEntry, cost: Double, today: Bool) {
+        total += cost
+        var m = byModel[e.model, default: ModelUsage()]
+        m.cost += cost
+        m.messages += 1
+        m.inputTokens += e.input
+        m.outputTokens += e.output
+        m.cacheWriteTokens += e.cacheWrite5m + e.cacheWrite1h
+        m.cacheReadTokens += e.cacheRead
+        if today {
+            totalToday += cost
+            m.costToday += cost
+        }
+        byModel[e.model] = m
+    }
 }
 
 /// Parsed log entries per file, reused while a file's size and mtime are unchanged.
@@ -63,16 +95,17 @@ public struct UsageScanner: Sendable {
         return dirs.map { $0.appending(path: "projects") }
     }
 
-    public func scan(from start: Date, to end: Date = Date(), cache: ScanCache = ScanCache()) -> UsageSummary {
+    /// Entries at or after `todayStart` also count toward the `…Today` totals.
+    public func scan(from start: Date, to end: Date = Date(), todayStart: Date? = nil,
+                     cache: ScanCache = ScanCache()) -> UsageSummary {
         // Claude Code logs a response several times while it streams (and again when a
         // session is resumed); token counts only grow, so keep the costliest copy.
-        var byKey: [String: (model: String, cost: Double)] = [:]
+        var byKey: [String: (entry: UsageEntry, cost: Double)] = [:]
         var summary = UsageSummary()
+        let todayStart = todayStart ?? end
 
-        func add(_ model: String, _ cost: Double) {
-            summary.total += cost
-            summary.byModel[model, default: 0] += cost
-            summary.messages += 1
+        func add(_ e: UsageEntry, _ cost: Double) {
+            summary.add(e, cost: cost, today: e.date >= todayStart)
         }
 
         for (url, size, mtime) in jsonlFiles(modifiedAfter: start) {
@@ -90,13 +123,13 @@ public struct UsageScanner: Sendable {
                 }
                 let cost = e.cost(p)
                 if let key = e.key {
-                    if cost > byKey[key]?.cost ?? -1 { byKey[key] = (e.model, cost) }
+                    if cost > byKey[key]?.cost ?? -1 { byKey[key] = (e, cost) }
                 } else {
-                    add(e.model, cost)
+                    add(e, cost)
                 }
             }
         }
-        for (model, cost) in byKey.values { add(model, cost) }
+        for (e, cost) in byKey.values { add(e, cost) }
         return summary
     }
 

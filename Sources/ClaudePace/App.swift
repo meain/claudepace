@@ -18,6 +18,7 @@ struct ClaudePaceApp: App {
 /// Local view state; `@State` is a macro that Command Line Tools can't expand.
 final class ViewState: ObservableObject {
     @Published var showSettings = false
+    @Published var showModels = true
 }
 
 struct UsageView: View {
@@ -35,13 +36,17 @@ struct UsageView: View {
                 Text("No price for \(unpriced.sorted().joined(separator: ", ")); not counted.")
                     .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
+            if let summary = model.summary, !summary.byModel.isEmpty {
+                Divider()
+                DisclosureGroup("By model", isExpanded: $ui.showModels) { models(summary) }
+            }
             Divider()
             DisclosureGroup("Settings", isExpanded: $ui.showSettings) { settings }
             Divider()
             footer
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 320)
     }
 
     private var header: some View {
@@ -60,6 +65,7 @@ struct UsageView: View {
     private func stats(_ s: BudgetStatus) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
             row("Spent this month", usd(s.spent))
+            row("Spent today", usd(model.summary?.totalToday ?? 0))
             row("Expected by today", usd(s.expectedSpend) + " (\(s.completedDays)/\(s.daysInMonth) days)")
             row("Daily allowance", usd(s.dailyAllowance))
             row("Left for today", usd(s.leftToday))
@@ -68,6 +74,39 @@ struct UsageView: View {
             row("Reserved", usd(s.reservedAmount) + " (\(Int(s.reservePercent))%)")
         }
         .font(.callout)
+    }
+
+    private func models(_ summary: UsageSummary) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(summary.models, id: \.name) { m in
+                let share = summary.total > 0 ? m.usage.cost / summary.total : 0
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(m.name.replacingOccurrences(of: "claude-", with: ""))
+                            .font(.callout.weight(.medium))
+                        Spacer()
+                        Text(usd(m.usage.cost)).font(.callout).monospacedDigit()
+                    }
+                    ProgressView(value: share)
+                    Text("\(Int((share * 100).rounded()))% · today \(usd(m.usage.costToday)) · \(m.usage.messages) msgs")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    Text("in \(tokens(m.usage.inputTokens)) · out \(tokens(m.usage.outputTokens)) · "
+                         + "cache w \(tokens(m.usage.cacheWriteTokens)) · r \(tokens(m.usage.cacheReadTokens))")
+                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func tokens(_ n: Int) -> String {
+        let d = Double(n)
+        switch d {
+        case 1e9...: return String(format: "%.1fB", d / 1e9)
+        case 1e6...: return String(format: "%.1fM", d / 1e6)
+        case 1e3...: return String(format: "%.1fK", d / 1e3)
+        default: return "\(n)"
+        }
     }
 
     private func row(_ k: String, _ v: String) -> some View {

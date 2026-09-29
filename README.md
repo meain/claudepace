@@ -1,8 +1,8 @@
 # ClaudePace
 
-macOS menu bar app that shows how many days ahead (`+2d`) or behind (`−1d`) you are on your monthly Claude budget.
+<img src="docs/screenshot.png" alt="ClaudePace popover" width="300" align="right">
 
-<img src="docs/screenshot.png" alt="ClaudePace popover" width="340">
+macOS menu bar app that shows how many days ahead (`+2d`) or behind (`−1d`) you are on your monthly Claude budget, with a per-model breakdown of cost, today's spend, messages and tokens.
 
 ## How it works
 

@@ -68,8 +68,9 @@ final class UsageModel: ObservableObject {
         let cache = scanCache
         let now = Date()
         let start = BudgetStatus.monthStart(of: now)
+        let today = Calendar.current.startOfDay(for: now)
         summary = await Task.detached(priority: .utility) {
-            UsageScanner(prices: prices).scan(from: start, to: now, cache: cache)
+            UsageScanner(prices: prices).scan(from: start, to: now, todayStart: today, cache: cache)
         }.value
         lastUpdated = now
     }
