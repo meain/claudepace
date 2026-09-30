@@ -28,15 +28,90 @@ final class ViewState: ObservableObject {
 
     @Published var showSettings = false
     @Published var breakdown: Breakdown
+    /// Raw date under the cursor on the sparkline; nil when not hovering.
+    @Published var hoveredDate: Date?
+    /// Breakdown rows disclosed to show their details, keyed by tab and row id.
+    @Published var expanded: Set<String> = []
 
     init(breakdown: Breakdown = .models) { self.breakdown = breakdown }
 }
 
-private extension View {
-    func card() -> some View {
-        padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+final class HoverState: ObservableObject {
+    @Published var on = false
+}
+
+/// An NSMenu-style item: full-width row with a rounded accent highlight on hover.
+struct MenuRow<Content: View>: View {
+    var shortcut: KeyEquivalent?
+    var action: (() -> Void)?
+    /// Receives whether the row is highlighted, so secondary text can switch to white.
+    @ViewBuilder var content: (Bool) -> Content
+    @StateObject private var hover = HoverState()
+
+    init(shortcut: KeyEquivalent? = nil, action: (() -> Void)? = nil,
+         @ViewBuilder content: @escaping (Bool) -> Content) {
+        self.shortcut = shortcut
+        self.action = action
+        self.content = content
+    }
+
+    var body: some View {
+        Group {
+            if let action {
+                Button(action: action) { row }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(shortcut.map { KeyboardShortcut($0) })
+            } else {
+                row
+            }
+        }
+        .padding(.horizontal, 5)
+    }
+
+    private var row: some View {
+        HStack(spacing: 8) { content(hover.on) }
+            .padding(.horizontal, 9).padding(.vertical, 3)
+            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+            .foregroundStyle(hover.on ? Color.white : Color.primary)
+            .background(hover.on ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .onHover { hover.on = $0 }
+    }
+}
+
+/// A borderless toolbar icon with a subtle hover background.
+struct ToolbarIcon: View {
+    let symbol: String
+    let help: String
+    var shortcut: KeyEquivalent?
+    let action: () -> Void
+    @StateObject private var hover = HoverState()
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 26, height: 22)
+                .background(hover.on ? Color.primary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(shortcut.map { KeyboardShortcut($0) })
+        .onHover { hover.on = $0 }
+        .help(help)
+    }
+}
+
+/// Secondary text colour inside a `MenuRow`.
+private func dim(_ highlighted: Bool) -> Color { highlighted ? .white.opacity(0.8) : .secondary }
+
+private struct Glyph: View {
+    let name: String
+    var body: some View {
+        if name.isEmpty {
+            Color.clear.frame(width: 16, height: 1)
+        } else {
+            Image(systemName: name).font(.system(size: 12)).frame(width: 16).opacity(0.85)
+        }
     }
 }
 
@@ -50,72 +125,70 @@ struct UsageView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             header
             if let s = model.status {
                 hero(s)
+                separator
+                stats(s)
+                if let unpriced = model.summary?.unpricedModels, !unpriced.isEmpty {
+                    Text("No price for \(unpriced.sorted().joined(separator: ", ")); not counted.")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14).padding(.vertical, 3)
+                }
+                separator
                 sparkline(s)
-                tiles(s)
-            }
-            if let unpriced = model.summary?.unpricedModels, !unpriced.isEmpty {
-                Text("No price for \(unpriced.sorted().joined(separator: ", ")); not counted.")
-                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
             if let summary = model.summary, !summary.byModel.isEmpty {
+                separator
                 breakdown(summary)
             }
-            if ui.showSettings { settings }
-            footer
+            separator
+            actions
         }
-        .padding(14)
+        .padding(.vertical, 5)
+        .font(.system(size: 13))
         .frame(width: 340)
     }
 
-    // MARK: Header
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Text("Claude Pace").font(.headline)
-            if let s = model.status {
-                Text(String(format: "%+.1f days", s.daysAhead))
-                    .font(.caption.weight(.semibold)).monospacedDigit()
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(color(s).opacity(0.18), in: Capsule())
-                    .foregroundStyle(color(s))
-            }
-            Spacer()
-            if model.isLoading { ProgressView().controlSize(.small) }
-            Button {
-                ui.showSettings.toggle()
-            } label: {
-                Image(systemName: "gearshape\(ui.showSettings ? ".fill" : "")")
-            }
-            .buttonStyle(.borderless)
-            .help("Settings")
-        }
+    private var separator: some View {
+        Divider().padding(.horizontal, 14).padding(.vertical, 5)
     }
 
-    // MARK: Hero
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 3)
+    }
+
+    // MARK: Header & hero
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("CLAUDE PACE · \(Date().formatted(.dateTime.month(.wide)).uppercased())")
+            Spacer()
+            if model.isLoading { ProgressView().controlSize(.mini) }
+        }
+        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+        .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 3)
+    }
 
     private func hero(_ s: BudgetStatus) -> some View {
         let today = model.summary?.totalToday ?? 0
         let target = s.todayTarget(spentToday: today)
         let left = s.paceLeftToday(spentToday: today)
-        return VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(left >= 0 ? "LEFT TODAY" : "OVER TODAY'S TARGET")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(usd(abs(left), fraction: 0))
-                    .font(.system(size: 38, weight: .semibold, design: .rounded))
+                    .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(left >= 0 ? Color.primary : Color.red)
-                    .monospacedDigit()
-                Text("\(usd(today, fraction: 0)) of \(usd(target, fraction: 0)) target · "
-                     + "\(s.daysRemaining) days left")
-                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text(left >= 0 ? "left today" : "over today's target").foregroundStyle(.secondary)
             }
-            monthBar(s)
+            Text("\(usd(today, fraction: 0)) of \(usd(target, fraction: 0)) target · \(s.daysRemaining) days left")
+                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            monthBar(s).padding(.top, 8)
         }
-        .card()
+        .monospacedDigit()
+        .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 8)
     }
 
     /// Spend vs full monthly budget; the orange tail is the reserve, the tick is where spend should be today.
@@ -124,28 +197,61 @@ struct UsageView: View {
         let spent = min(max(s.spent / total, 0), 1)
         let expected = min(max(s.expectedSpend / total, 0), 1)
         let reserve = min(max(s.reservedAmount / total, 0), 1)
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
                 let w = geo.size.width
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.secondary.opacity(0.2))
-                    Rectangle().fill(Color.orange.opacity(0.35))
-                        .frame(width: w * reserve)
-                        .offset(x: w * (1 - reserve))
-                    Capsule().fill(color(s)).frame(width: w * spent)
-                    Rectangle().fill(Color.primary.opacity(0.7))
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color.primary.opacity(0.1))
+                        Rectangle().fill(Color.orange.opacity(0.45))
+                            .frame(width: w * reserve)
+                            .offset(x: w * (1 - reserve))
+                        Rectangle().fill(s.wholeDaysAhead < 0 ? Color.red : Color.accentColor)
+                            .frame(width: w * spent)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    RoundedRectangle(cornerRadius: 1).fill(Color.primary)
                         .frame(width: 2, height: 12)
                         .offset(x: w * expected - 1)
                 }
-                .clipShape(Capsule())
             }
-            .frame(height: 8)
+            .frame(height: 6)
             HStack {
                 Text("\(Int((s.spent / total * 100).rounded()))% of \(usd(s.monthlyBudget, fraction: 0))")
                 Spacer()
                 Text("reserve \(usd(s.reservedAmount, fraction: 0))")
             }
-            .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Stats
+
+    private func stats(_ s: BudgetStatus) -> some View {
+        let ahead = s.daysAhead >= 0
+        let pace = s.wholeDaysAhead < 0 ? Color.red : s.wholeDaysAhead > 0 ? Color.green : Color.primary
+        return VStack(spacing: 0) {
+            MenuRow { h in
+                Glyph(name: ahead ? "checkmark" : "exclamationmark.triangle")
+                    .foregroundStyle(h ? Color.white : pace)
+                Text("Pace")
+                Spacer()
+                Text(String(format: "%.1f days %@", abs(s.daysAhead), ahead ? "ahead" : "behind"))
+                    .fontWeight(.medium).foregroundStyle(h ? Color.white : pace)
+            }
+            statRow("sum", "Spent this month", s.spent)
+            statRow("clock", "Today", model.summary?.totalToday ?? 0)
+            statRow("circle.dashed", "Remaining", s.remainingThisMonth)
+        }
+        .monospacedDigit()
+    }
+
+    private func statRow(_ glyph: String, _ title: String, _ value: Double) -> some View {
+        MenuRow { _ in
+            Glyph(name: glyph)
+            Text(title)
+            Spacer()
+            Text(usd(value)).fontWeight(.medium)
         }
     }
 
@@ -174,44 +280,61 @@ struct UsageView: View {
                   pd < start else { return nil }
             return Day(date: cal.date(byAdding: .day, value: i, to: start)!, cost: p.byDay[pd] ?? 0)
         }
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Daily spend").font(.caption.weight(.semibold))
-                Spacer()
-                Text("avg \(usd(average, fraction: 0)) · allowance \(usd(s.dailyAllowance, fraction: 0))")
-                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-            }
-            Chart {
-                ForEach(prevDaily) { d in
-                    LineMark(x: .value("Day", d.date, unit: .day), y: .value("Spend", d.cost),
-                             series: .value("Series", "last month"))
-                        .foregroundStyle(Color.secondary.opacity(0.5))
-                        .lineStyle(StrokeStyle(lineWidth: 1))
-                        .interpolationMethod(.monotone)
+        let hovered = ui.hoveredDate.map { cal.startOfDay(for: $0) }
+            .flatMap { d in d >= start && d < monthEnd ? d : nil }
+        return VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("DAILY SPEND")
+            VStack(alignment: .leading, spacing: 4) {
+                Group {
+                    if let h = hovered {
+                        Text(hoverText(h, days: days, prevDaily: prevDaily))
+                    } else {
+                        Text("avg \(usd(average, fraction: 0)) · allowance \(usd(s.dailyAllowance, fraction: 0))")
+                    }
                 }
-                ForEach(days) { d in
-                    BarMark(x: .value("Day", d.date, unit: .day), y: .value("Spend", d.cost))
-                        .foregroundStyle(d.cost > s.dailyAllowance ? Color.red : Color.green)
-                        .opacity(cal.isDateInToday(d.date) ? 1 : 0.65)
-                        .cornerRadius(2)
+                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                Chart {
+                    ForEach(prevDaily) { d in
+                        LineMark(x: .value("Day", d.date, unit: .day), y: .value("Spend", d.cost),
+                                 series: .value("Series", "last month"))
+                            .foregroundStyle(Color.secondary.opacity(0.55))
+                            .lineStyle(StrokeStyle(lineWidth: 1))
+                            .interpolationMethod(.monotone)
+                    }
+                    if let h = hovered {
+                        RectangleMark(x: .value("Day", h, unit: .day))
+                            .foregroundStyle(Color.primary.opacity(0.08))
+                    }
+                    ForEach(days) { d in
+                        BarMark(x: .value("Day", d.date, unit: .day), y: .value("Spend", d.cost))
+                            .foregroundStyle(d.cost > s.dailyAllowance ? Color.red : Color.accentColor)
+                            .opacity(d.date == hovered || (hovered == nil && cal.isDateInToday(d.date)) ? 1 : 0.7)
+                            .cornerRadius(1.5)
+                    }
+                    RuleMark(y: .value("Allowance", s.dailyAllowance))
+                        .foregroundStyle(Color.secondary)
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 }
-                RuleMark(y: .value("Allowance", s.dailyAllowance))
-                    .foregroundStyle(Color.secondary)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            }
-            .chartXScale(domain: start...monthEnd)
-            .chartYAxis(.hidden)
-            .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: 7)) { _ in
-                    AxisValueLabel(format: .dateTime.day(), anchor: .top).font(.caption2)
+                .chartXScale(domain: start...monthEnd)
+                .chartXSelection(value: $ui.hoveredDate)
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .frame(height: 44)
+                if let text = monthComparison(s) {
+                    Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
-            .frame(height: 64)
-            if let text = monthComparison(s) {
-                Text(text).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-            }
+            .monospacedDigit()
+            .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 2)
         }
-        .card()
+    }
+
+    /// Label for the hovered sparkline day: its spend, plus last month's same day when known.
+    private func hoverText(_ day: Date, days: [Day], prevDaily: [Day]) -> String {
+        let label = day.formatted(.dateTime.month(.abbreviated).day())
+        let cost = days.first { $0.date == day }.map { usd($0.cost, fraction: 0) }
+        let prev = prevDaily.first { $0.date == day }.map { "last month \(usd($0.cost, fraction: 0))" }
+        return ([label] + [cost, prev].compactMap { $0 }).joined(separator: " · ")
     }
 
     /// Spend before today vs the same stretch of last month (the grey line above).
@@ -230,32 +353,17 @@ struct UsageView: View {
         return "\(pct >= 0 ? "+" : "−")\(abs(pct))% vs same point last month · " + tail
     }
 
-    // MARK: Tiles
-
-    private func tiles(_ s: BudgetStatus) -> some View {
-        HStack(spacing: 8) {
-            tile("Spent", usd(s.spent, fraction: 0))
-            tile("Today", usd(model.summary?.totalToday ?? 0, fraction: 0))
-            tile("Remaining", usd(s.remainingThisMonth, fraction: 0))
-        }
-    }
-
-    private func tile(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
-            Text(value).font(.system(.body, design: .rounded).weight(.semibold)).monospacedDigit()
-        }
-        .card()
-    }
-
     // MARK: Breakdown
 
     private func breakdown(_ summary: UsageSummary) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("BREAKDOWN")
             Picker("", selection: $ui.breakdown) {
                 ForEach(ViewState.Breakdown.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented).labelsHidden()
+            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 6)
 
             switch ui.breakdown {
             case .models: models(summary)
@@ -263,13 +371,13 @@ struct UsageView: View {
             case .sessions: sessions(summary)
             }
         }
-        .card()
+        .monospacedDigit()
     }
 
     private func models(_ summary: UsageSummary) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 0) {
             ForEach(summary.models, id: \.name) { m in
-                row(name: m.name.replacingOccurrences(of: "claude-", with: ""),
+                row(id: "m:\(m.name)", name: m.name.replacingOccurrences(of: "claude-", with: ""),
                     cost: m.usage.cost, share: summary.total > 0 ? m.usage.cost / summary.total : 0,
                     detail: "today \(usd(m.usage.costToday)) · \(m.usage.messages) msgs",
                     tokens: "in \(tokens(m.usage.inputTokens)) · out \(tokens(m.usage.outputTokens)) · "
@@ -283,15 +391,14 @@ struct UsageView: View {
     private func projects(_ summary: UsageSummary) -> some View {
         let all = summary.projects
         let rest = all.dropFirst(Self.projectLimit).reduce(0) { $0 + $1.usage.cost }
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(spacing: 0) {
             ForEach(all.prefix(Self.projectLimit), id: \.name) { p in
-                row(name: p.name, cost: p.usage.cost,
+                row(id: "p:\(p.name)", name: p.name, cost: p.usage.cost,
                     share: summary.total > 0 ? p.usage.cost / summary.total : 0,
                     detail: "today \(usd(p.usage.costToday)) · \(p.usage.messages) msgs", tokens: nil)
             }
             if all.count > Self.projectLimit {
-                Text("+\(all.count - Self.projectLimit) more · \(usd(rest))")
-                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                moreRow("+\(all.count - Self.projectLimit) more", value: usd(rest))
             }
         }
     }
@@ -301,19 +408,27 @@ struct UsageView: View {
     private func sessions(_ summary: UsageSummary) -> some View {
         let all = summary.sessions
         let top = all.first?.usage.cost ?? 0
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(spacing: 0) {
             ForEach(all.prefix(Self.sessionLimit), id: \.id) { x in
                 let u = x.usage
-                row(name: u.title ?? u.project, cost: u.cost, share: top > 0 ? u.cost / top : 0,
+                row(id: "s:\(x.id)", name: u.title ?? u.project, cost: u.cost, share: top > 0 ? u.cost / top : 0,
                     detail: (u.title == nil ? "" : "\(u.project) · ")
                         + "\(u.start.formatted(.dateTime.month(.abbreviated).day())) · "
                         + "\(duration(u.end.timeIntervalSince(u.start))) · \(u.messages) msgs",
                     tokens: nil, showShare: false)
             }
             if all.count > Self.sessionLimit {
-                Text("\(all.count) sessions this month")
-                    .font(.caption).foregroundStyle(.secondary)
+                moreRow("\(all.count) sessions this month", value: nil)
             }
+        }
+    }
+
+    private func moreRow(_ title: String, value: String?) -> some View {
+        MenuRow { h in
+            Color.clear.frame(width: 10, height: 1) // lines up with the disclosure chevron
+            Text(title).foregroundStyle(dim(h))
+            Spacer()
+            if let value { Text(value).foregroundStyle(dim(h)) }
         }
     }
 
@@ -322,26 +437,44 @@ struct UsageView: View {
         return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
     }
 
-    /// `share` fills the bar; `showShare` also prints it as a percentage of the total.
-    private func row(name: String, cost: Double, share: Double, detail: String, tokens: String?,
+    /// A disclosure row; clicking it reveals the share bar, `detail` and `tokens`.
+    /// `showShare` prints `share` as a percentage of the total next to the cost.
+    private func row(id: String, name: String, cost: Double, share: Double, detail: String, tokens: String?,
                      showShare: Bool = true) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Text(usd(cost)).font(.callout).monospacedDigit()
+        let open = ui.expanded.contains(id)
+        return VStack(alignment: .leading, spacing: 0) {
+            MenuRow(action: {
+                if open { ui.expanded.remove(id) } else { ui.expanded.insert(id) }
+            }) { h in
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(dim(h))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .frame(width: 10)
+                Text(name).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                if showShare {
+                    Text("\(Int((share * 100).rounded()))%").font(.system(size: 11)).foregroundStyle(dim(h))
+                        .frame(width: 30, alignment: .trailing)
+                }
+                // Fixed column so the share percentages line up across rows.
+                Text(usd(cost)).fontWeight(.medium).frame(minWidth: 72, alignment: .trailing)
             }
-            GeometryReader { geo in
-                Capsule().fill(Color.secondary.opacity(0.2))
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(Color.accentColor).frame(width: geo.size.width * min(max(share, 0), 1))
+            if open {
+                VStack(alignment: .leading, spacing: 3) {
+                    GeometryReader { geo in
+                        Capsule().fill(Color.primary.opacity(0.08))
+                            .overlay(alignment: .leading) {
+                                Capsule().fill(Color.accentColor)
+                                    .frame(width: geo.size.width * min(max(share, 0), 1))
+                            }
                     }
-            }
-            .frame(height: 4)
-            Text(showShare ? "\(Int((share * 100).rounded()))% · \(detail)" : detail)
-                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            if let tokens {
-                Text(tokens).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                    .frame(height: 3)
+                    Text(detail)
+                    if let tokens { Text(tokens) }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .padding(.leading, 33).padding(.trailing, 14).padding(.top, 2).padding(.bottom, 4)
             }
         }
     }
@@ -356,7 +489,47 @@ struct UsageView: View {
         }
     }
 
-    // MARK: Settings & footer
+    // MARK: Actions, settings & footer
+
+    /// Settings panel (when open) above a single toolbar line: last update, then icon actions.
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if ui.showSettings { settings }
+            HStack(spacing: 2) {
+                if let t = model.lastUpdated {
+                    TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                        Text("Updated \(ago(t, now: ctx.date))")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                ToolbarIcon(symbol: ui.showSettings ? "gearshape.fill" : "gearshape", help: "Settings (⌘,)",
+                            shortcut: ",") { ui.showSettings.toggle() }
+                ToolbarIcon(symbol: "arrow.clockwise", help: "Refresh (⌘R)", shortcut: "r") {
+                    Task { await model.refresh() }
+                }
+                .disabled(model.isLoading)
+                Menu {
+                    Button("Copy JSON") { model.copyExport(json: true) }
+                    Menu("Copy CSV") {
+                        ForEach(Export.Grouping.allCases, id: \.self) { g in
+                            Button("by \(g.rawValue)") { model.copyExport(json: false, by: g) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .frame(width: 26, height: 22)
+                .help("Copy this month's usage to the clipboard")
+                .disabled(model.summary == nil)
+                ToolbarIcon(symbol: "power", help: "Quit Claude Pace (⌘Q)", shortcut: "q") {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+            .padding(.leading, 14).padding(.trailing, 9).padding(.vertical, 2)
+        }
+    }
 
     private var settings: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -364,7 +537,7 @@ struct UsageView: View {
                 Text("Monthly budget")
                 Spacer()
                 TextField("", value: $model.monthlyBudget, format: .currency(code: "USD"))
-                    .frame(width: 110)
+                    .frame(width: 100)
                     .multilineTextAlignment(.trailing)
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -376,37 +549,12 @@ struct UsageView: View {
             }
             .pickerStyle(.segmented)
             Text("Source: Claude Code logs · pricing: \(model.pricingSource)")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
         }
-        .card()
+        .font(.system(size: 12.5)).controlSize(.small)
+        .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 8)
     }
 
-    private var footer: some View {
-        HStack {
-            if let t = model.lastUpdated {
-                TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                    Text("Updated \(ago(t, now: ctx.date))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            Menu {
-                Button("Copy JSON") { model.copyExport(json: true) }
-                Menu("Copy CSV") {
-                    ForEach(Export.Grouping.allCases, id: \.self) { g in
-                        Button("by \(g.rawValue)") { model.copyExport(json: false, by: g) }
-                    }
-                }
-            } label: { Image(systemName: "square.and.arrow.up") }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Copy this month's usage to the clipboard")
-                .disabled(model.summary == nil)
-            Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                .buttonStyle(.borderless).help("Refresh").disabled(model.isLoading)
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-                .buttonStyle(.borderless)
-        }
-    }
 
     // MARK: Helpers
 
@@ -416,13 +564,6 @@ struct UsageView: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
         return f.localizedString(for: t, relativeTo: now)
-    }
-
-    private func color(_ s: BudgetStatus?) -> Color {
-        guard let s else { return .secondary }
-        if s.wholeDaysAhead < 0 { return .red }
-        if s.wholeDaysAhead > 0 { return .green }
-        return .primary
     }
 
     private func usd(_ v: Double, fraction: Int? = nil) -> String {
