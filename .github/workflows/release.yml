@@ -33,4 +33,4 @@ jobs:
           gh release create "$TAG" ClaudePace.zip \
             --target "$GITHUB_SHA" \
             --title "$TAG" \
-            --generate-notes
+            --notes-file .github/release-notes.md
