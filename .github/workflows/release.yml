@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to create and release
+        default: v1
+        required: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        run: make app
+
+      - name: Package
+        run: ditto -c -k --keepParent build/ClaudePace.app ClaudePace.zip
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" ClaudePace.zip \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes
