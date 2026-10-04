@@ -69,9 +69,15 @@ final class UsageModel: ObservableObject {
                             spent: summary.total, now: Date())
     }
 
+    /// Read from the per-day totals rather than `summary.totalToday`, which goes stale at midnight
+    /// until the next scan and would hide yesterday's under/overspend from today's target.
+    var spentToday: Double {
+        summary?.byDay[Calendar.current.startOfDay(for: Date())] ?? 0
+    }
+
     var menuBarLabel: String {
         guard let status else { return "…" }
-        let today = summary?.totalToday ?? 0
+        let today = spentToday
         let left = status.paceLeftToday(spentToday: today)
         let sign = left < 0 ? "−" : ""
         switch menuBarMode {

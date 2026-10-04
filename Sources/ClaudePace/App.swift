@@ -173,7 +173,7 @@ struct UsageView: View {
     }
 
     private func hero(_ s: BudgetStatus) -> some View {
-        let today = model.summary?.totalToday ?? 0
+        let today = model.spentToday
         let target = s.todayTarget(spentToday: today)
         let left = s.paceLeftToday(spentToday: today)
         return VStack(alignment: .leading, spacing: 1) {
@@ -240,7 +240,7 @@ struct UsageView: View {
                     .fontWeight(.medium).foregroundStyle(h ? Color.white : pace)
             }
             statRow("sum", "Spent this month", s.spent)
-            statRow("clock", "Today", model.summary?.totalToday ?? 0)
+            statRow("clock", "Today", model.spentToday)
             statRow("circle.dashed", "Remaining", s.remainingThisMonth)
         }
         .monospacedDigit()
@@ -346,7 +346,7 @@ struct UsageView: View {
         let samePoint = (0..<s.completedDays).reduce(0.0) { acc, i in
             acc + (cal.date(byAdding: .day, value: i, to: prevStart).flatMap { prev.byDay[$0] } ?? 0)
         }
-        let so = s.spent - (model.summary?.totalToday ?? 0)
+        let so = s.spent - model.spentToday
         let tail = "last month \(usd(prev.total, fraction: 0)) total"
         guard samePoint > 0 else { return tail }
         let pct = Int(((so - samePoint) / samePoint * 100).rounded())
