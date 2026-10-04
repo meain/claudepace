@@ -13,7 +13,7 @@ final class UsageModel: ObservableObject {
     }
 
     enum MenuBarMode: String, CaseIterable {
-        case days = "Days", percent = "% left", dollars = "$ left"
+        case days = "Days", percent = "% used", dollars = "$ left"
     }
 
     @Published var menuBarMode: MenuBarMode {
@@ -79,8 +79,8 @@ final class UsageModel: ObservableObject {
             return status.label
         case .percent:
             let target = status.todayTarget(spentToday: today)
-            let pct = target > 0 ? Int((abs(left) / target * 100).rounded()) : 0
-            return "\(sign)\(pct)%"
+            let pct = target > 0 ? Int((today / target * 100).rounded()) : 0
+            return "\(pct)%"
         case .dollars:
             return "\(sign)$\(Int(abs(left).rounded()))"
         }
