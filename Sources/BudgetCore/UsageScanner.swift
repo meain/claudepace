@@ -57,32 +57,57 @@ public struct UsageSummary: Sendable {
 
     public init() {}
 
+    /// Today's slice of `byModel` / `byProject` / `bySession`, for the daily breakdown.
+    public var byModelToday: [String: ModelUsage] = [:]
+    public var byProjectToday: [String: ProjectUsage] = [:]
+    public var bySessionToday: [String: SessionUsage] = [:]
+
+    /// Models by descending cost, over the month or just today.
+    public func models(today: Bool) -> [(name: String, usage: ModelUsage)] {
+        (today ? byModelToday : byModel).sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
+    }
+
+    public func projects(today: Bool) -> [(name: String, usage: ProjectUsage)] {
+        (today ? byProjectToday : byProject).sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
+    }
+
+    public func sessions(today: Bool) -> [(id: String, usage: SessionUsage)] {
+        (today ? bySessionToday : bySession).sorted { $0.value.cost > $1.value.cost }.map { ($0.key, $0.value) }
+    }
+
     mutating func add(_ e: UsageEntry, cost: Double, today: Bool, day: Date) {
         total += cost
         byDay[day, default: 0] += cost
-        var s = bySession[e.session, default: SessionUsage(project: e.project, start: e.date, end: e.date)]
-        s.cost += cost
-        s.messages += 1
-        s.start = min(s.start, e.date)
-        s.end = max(s.end, e.date)
-        bySession[e.session] = s
-        var p = byProject[e.project, default: ProjectUsage()]
-        p.cost += cost
-        p.messages += 1
-        if today { p.costToday += cost }
-        byProject[e.project] = p
-        var m = byModel[e.model, default: ModelUsage()]
-        m.cost += cost
-        m.messages += 1
-        m.inputTokens += e.input
-        m.outputTokens += e.output
-        m.cacheWriteTokens += e.cacheWrite5m + e.cacheWrite1h
-        m.cacheReadTokens += e.cacheRead
+        let bumpSession: (inout SessionUsage) -> Void = { s in
+            s.cost += cost
+            s.messages += 1
+            s.start = min(s.start, e.date)
+            s.end = max(s.end, e.date)
+        }
+        let newSession = SessionUsage(project: e.project, start: e.date, end: e.date)
+        bumpSession(&bySession[e.session, default: newSession])
+        if today { bumpSession(&bySessionToday[e.session, default: newSession]) }
+        let bump: (inout ProjectUsage, Bool) -> Void = { p, isToday in
+            p.cost += cost
+            p.messages += 1
+            if isToday { p.costToday += cost }
+        }
+        bump(&byProject[e.project, default: ProjectUsage()], today)
+        if today { bump(&byProjectToday[e.project, default: ProjectUsage()], true) }
+        let bumpModel: (inout ModelUsage, Bool) -> Void = { m, isToday in
+            m.cost += cost
+            m.messages += 1
+            m.inputTokens += e.input
+            m.outputTokens += e.output
+            m.cacheWriteTokens += e.cacheWrite5m + e.cacheWrite1h
+            m.cacheReadTokens += e.cacheRead
+            if isToday { m.costToday += cost }
+        }
+        bumpModel(&byModel[e.model, default: ModelUsage()], today)
         if today {
             totalToday += cost
-            m.costToday += cost
+            bumpModel(&byModelToday[e.model, default: ModelUsage()], true)
         }
-        byModel[e.model] = m
     }
 }
 
@@ -184,7 +209,10 @@ public struct UsageScanner: Sendable {
             }
         }
         for (e, cost) in byKey.values { add(e, cost) }
-        for (id, title) in titles { summary.bySession[id]?.title = title }
+        for (id, title) in titles {
+            summary.bySession[id]?.title = title
+            summary.bySessionToday[id]?.title = title
+        }
         return summary
     }
 

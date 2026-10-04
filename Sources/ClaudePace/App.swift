@@ -28,6 +28,8 @@ final class ViewState: ObservableObject {
 
     @Published var showSettings = false
     @Published var breakdown: Breakdown
+    /// Breakdown covers only today instead of the whole month.
+    @Published var daily = false
     /// Raw date under the cursor on the sparkline; nil when not hovering.
     @Published var hoveredDate: Date?
     /// Breakdown rows disclosed to show their details, keyed by tab and row id.
@@ -358,11 +360,18 @@ struct UsageView: View {
     private func breakdown(_ summary: UsageSummary) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeader("BREAKDOWN")
-            Picker("", selection: $ui.breakdown) {
-                ForEach(ViewState.Breakdown.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            HStack(spacing: 8) {
+                Picker("", selection: $ui.breakdown) {
+                    ForEach(ViewState.Breakdown.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                Picker("", selection: $ui.daily) {
+                    Text("Monthly").tag(false)
+                    Text("Daily").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
             }
-            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .controlSize(.small)
             .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 6)
 
             switch ui.breakdown {
@@ -375,11 +384,13 @@ struct UsageView: View {
     }
 
     private func models(_ summary: UsageSummary) -> some View {
-        VStack(spacing: 0) {
-            ForEach(summary.models, id: \.name) { m in
-                row(id: "m:\(m.name)", name: m.name.replacingOccurrences(of: "claude-", with: ""),
-                    cost: m.usage.cost, share: summary.total > 0 ? m.usage.cost / summary.total : 0,
-                    detail: "today \(usd(m.usage.costToday)) · \(m.usage.messages) msgs",
+        let daily = ui.daily
+        let total = daily ? summary.totalToday : summary.total
+        return VStack(spacing: 0) {
+            ForEach(summary.models(today: daily), id: \.name) { m in
+                row(id: "m:\(daily):\(m.name)", name: m.name.replacingOccurrences(of: "claude-", with: ""),
+                    cost: m.usage.cost, share: total > 0 ? m.usage.cost / total : 0,
+                    detail: (daily ? "" : "today \(usd(m.usage.costToday)) · ") + "\(m.usage.messages) msgs",
                     tokens: "in \(tokens(m.usage.inputTokens)) · out \(tokens(m.usage.outputTokens)) · "
                         + "cache w \(tokens(m.usage.cacheWriteTokens)) · r \(tokens(m.usage.cacheReadTokens))")
             }
@@ -389,13 +400,16 @@ struct UsageView: View {
     private static let projectLimit = 8
 
     private func projects(_ summary: UsageSummary) -> some View {
-        let all = summary.projects
+        let daily = ui.daily
+        let total = daily ? summary.totalToday : summary.total
+        let all = summary.projects(today: daily)
         let rest = all.dropFirst(Self.projectLimit).reduce(0) { $0 + $1.usage.cost }
         return VStack(spacing: 0) {
             ForEach(all.prefix(Self.projectLimit), id: \.name) { p in
-                row(id: "p:\(p.name)", name: p.name, cost: p.usage.cost,
-                    share: summary.total > 0 ? p.usage.cost / summary.total : 0,
-                    detail: "today \(usd(p.usage.costToday)) · \(p.usage.messages) msgs", tokens: nil)
+                row(id: "p:\(daily):\(p.name)", name: p.name, cost: p.usage.cost,
+                    share: total > 0 ? p.usage.cost / total : 0,
+                    detail: (daily ? "" : "today \(usd(p.usage.costToday)) · ") + "\(p.usage.messages) msgs",
+                    tokens: nil)
             }
             if all.count > Self.projectLimit {
                 moreRow("+\(all.count - Self.projectLimit) more", value: usd(rest))
@@ -406,19 +420,20 @@ struct UsageView: View {
     private static let sessionLimit = 8
 
     private func sessions(_ summary: UsageSummary) -> some View {
-        let all = summary.sessions
+        let daily = ui.daily
+        let all = summary.sessions(today: daily)
         let top = all.first?.usage.cost ?? 0
         return VStack(spacing: 0) {
             ForEach(all.prefix(Self.sessionLimit), id: \.id) { x in
                 let u = x.usage
-                row(id: "s:\(x.id)", name: u.title ?? u.project, cost: u.cost, share: top > 0 ? u.cost / top : 0,
+                row(id: "s:\(daily):\(x.id)", name: u.title ?? u.project, cost: u.cost, share: top > 0 ? u.cost / top : 0,
                     detail: (u.title == nil ? "" : "\(u.project) · ")
                         + "\(u.start.formatted(.dateTime.month(.abbreviated).day())) · "
                         + "\(duration(u.end.timeIntervalSince(u.start))) · \(u.messages) msgs",
                     tokens: nil, showShare: false)
             }
             if all.count > Self.sessionLimit {
-                moreRow("\(all.count) sessions this month", value: nil)
+                moreRow("\(all.count) sessions \(daily ? "today" : "this month")", value: nil)
             }
         }
     }

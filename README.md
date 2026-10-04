@@ -10,7 +10,7 @@ The popup is laid out like a native macOS menu:
 - Month progress bar with the reserve and where spend should be by today.
 - Pace (days ahead or behind), spent this month, today and remaining.
 - Daily spend sparkline against the daily allowance, with last month's daily spend as a grey line and a % change vs the same point last month. Hover a day to see its spend next to last month's.
-- Breakdown by model, project, or session (the costliest sessions this month, by session name). Click a row to expand today's spend, messages, tokens or the session's project and duration.
+- Breakdown by model, project, or session (the costliest sessions this month, by session name).  Switch between monthly and daily (today only). Click a row to expand today's spend, messages, tokens or the session's project and duration.
 - A toolbar for settings (budget, reserve, menu bar mode), refresh (⌘R), export and quit (⌘Q).
 - Export this month's usage as JSON or CSV (by day, model, project or session): the share button copies it to the clipboard, or run `make export FORMAT=json` / `make export FORMAT=csv BY=session`.
 
