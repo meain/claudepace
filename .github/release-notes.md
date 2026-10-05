@@ -1,11 +1,6 @@
-First release of ClaudePace, a macOS menu bar app that tracks your Claude Code spend against a monthly budget, so you know whether you're ahead of or behind pace.
-
-- **Menu bar:** days ahead/behind (`+2d` / `âˆ’1d`), or what's left of today's target as a percentage or in dollars.
-- **Pace-aware "left today":** the remaining budget is spread over the remaining days, so earlier over- or underspend carries forward.
-- **Popup:** month progress, spent/today/remaining, and a daily sparkline against your allowance with last month overlaid.
-- **Breakdowns:** by model, project or session, with click-to-expand details.
-- **Export:** this month's usage as JSON or CSV.
-- **No API key:** it reads Claude Code's local session logs and prices tokens the same way ccusage does, using LiteLLM's price list.
+- **Menu bar:** new option to show the percent of today's target used.
+- **Breakdown:** daily/monthly toggle on the model, project and session views.
+- **Fix:** today's spend is now computed from per-day totals, so it rolls over correctly at midnight.
 
 ### Install
 
@@ -16,5 +11,3 @@ The app is ad-hoc signed, not notarized, so the first launch needs right-click â
 ```sh
 xattr -dr com.apple.quarantine /Applications/ClaudePace.app
 ```
-
-Only covers Claude Code on the machine it runs on, at list prices.
